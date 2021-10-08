@@ -29,7 +29,7 @@ lazy_static! {
 async fn main() {
     let app = Router::new()
         .route("/simple/", get(root).post(create_package)) // GET POST /simple/
-        .route("/simple/:distrib", get(get_distribution)) // GET /simple/<distrib>/
+        .route("/simple/:distrib/", get(get_distribution)) // GET /simple/<distrib>/
         .route("/simple/:distrib/:filename", get(get_package)); // GET /simple/<distrib>/<filename>
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 2000));
@@ -74,7 +74,6 @@ fn filter_s3_folders(data: &ListObjectsV2Output) -> Vec<String> {
 }
 
 async fn root() -> Result<Html<String>, impl IntoResponse> {
-    // TODO: Load all packages from s3
     let client = S3Client::new(Region::UsEast2);
     let request = ListObjectsV2Request {
         bucket: "koloni-pypi".into(),
@@ -84,7 +83,6 @@ async fn root() -> Result<Html<String>, impl IntoResponse> {
 
     match client.list_objects_v2(request).await {
         Ok(result) => {
-            println!("{:?}", filter_s3_folders(&result));
             let packages = filter_s3_folders(&result);
             let packages = ListPackages {
                 packages: packages.iter().map(|name| {
@@ -95,7 +93,6 @@ async fn root() -> Result<Html<String>, impl IntoResponse> {
                 }).collect(),
             };
             let page = TEMPLATES.render("simple.html", &Context::from_serialize(&packages).unwrap()).unwrap();
-            // println!("{}", page);
 
             Ok(Html(page))
         }
@@ -103,17 +100,32 @@ async fn root() -> Result<Html<String>, impl IntoResponse> {
     }
 }
 
-async fn get_distribution(Path(distrib): Path<String>) -> Html<String> {
-    let all_packages = Vec::new();
-
-    // TODO: Load distrib packages from s3
-
-    let packages = ListPackages {
-        packages: all_packages,
+async fn get_distribution(Path(distrib): Path<String>) -> Result<Html<String>, impl IntoResponse> {
+    let client = S3Client::new(Region::UsEast2);
+    let request = ListObjectsV2Request {
+        bucket: "koloni-pypi".into(),
+        prefix: Some(format!("{}/", distrib)),
+        ..Default::default()
     };
-    let page = TEMPLATES.render("simple.html", &Context::from_serialize(&packages).unwrap()).unwrap();
 
-    Html(page)
+    match client.list_objects_v2(request).await {
+        Ok(result) => {
+            println!("{:?}", result);
+            let packages = filter_s3_packages(&result);
+            let packages = ListPackages {
+                packages: packages.iter().map(|name| {
+                    Package {
+                        name: name.into(),
+                        href: format!("/simple/{}/{}/", distrib, name)
+                    }
+                }).collect(),
+            };
+            let page = TEMPLATES.render("simple.html", &Context::from_serialize(&packages).unwrap()).unwrap();
+
+            Ok(Html(page))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(format!("{:?}", err))))
+    }
 }
 
 async fn get_package() -> impl IntoResponse {
@@ -127,4 +139,27 @@ async fn create_package(Json(payload): Json<CreatePackage>) -> impl IntoResponse
 #[derive(Deserialize)]
 struct CreatePackage {
     name: String,
+}
+
+fn filter_s3_packages(data: &ListObjectsV2Output) -> Vec<String> {
+    let mut packages = HashSet::new();
+
+    match &data.contents {
+        Some(contents) => {
+            contents.iter().for_each(|obj| {
+                match &obj.key {
+                    Some(key) => {
+                        let filename = key.split('/').nth(1);
+                        if let Some(filename) = filename {
+                            packages.insert(filename);
+                        }
+                    }
+                    _ => {},
+                }
+            });
+        }
+        _ => {}
+    }
+
+    packages.iter().map(|key| key.to_string()).collect()
 }
