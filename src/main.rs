@@ -7,31 +7,23 @@ use axum::{
 };
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use rusoto_s3::{ListObjectsV2Request, ListObjectsV2Output, S3Client, S3};
+use rusoto_signature::region::Region;
 use serde_json::{to_value, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use tera::{Context, Result, Tera, try_get_value};
+use tera::{Context, Tera};
 
 lazy_static! {
     pub static ref TEMPLATES: Tera = {
-        let mut tera = match Tera::new("templates/*") {
+        match Tera::new("templates/*") {
             Ok(t) => t,
             Err(e) => {
                 panic!("Parsing error: {}", e);
             }
-        };
-        tera.autoescape_on(vec!["html", ".sql"]);
-        // tera.register_filter("do_nothing", do_nothing_filter);
-        tera
+        }
     };
 }
-
-/*
-pub fn do_nothing_filter(value: &Value, _: &HashMap<String, Value>) -> Result<Value> {
-    let s = try_get_value!("do_nothing_filter", "value", String, value);
-    Ok(to_value(&s).unwrap())
-}
-*/
 
 #[tokio::main]
 async fn main() {
@@ -59,18 +51,56 @@ struct ListPackages {
     packages: Vec<Package>,
 }
 
-async fn root() -> Html<String> {
-    let all_packages = Vec::new();
+fn filter_s3_folders(data: &ListObjectsV2Output) -> Vec<String> {
+    let mut folders = HashSet::new();
 
+    match &data.contents {
+        Some(contents) => {
+            contents.iter().for_each(|obj| {
+                match &obj.key {
+                    Some(key) => {
+                        let mut base = key.split('/');
+                        folders.insert(base.next().expect("s3 bucket formatted improperly"));
+                        // println!("{}", key);
+                    }
+                    _ => {},
+                }
+            });
+        }
+        _ => {}
+    }
+
+    folders.iter().map(|key| key.to_string()).collect()
+}
+
+async fn root() -> Result<Html<String>, impl IntoResponse> {
     // TODO: Load all packages from s3
-
-    let packages = ListPackages {
-        packages: all_packages,
+    let client = S3Client::new(Region::UsEast2);
+    let request = ListObjectsV2Request {
+        bucket: "koloni-pypi".into(),
+        // delimiter: Some("/".into()),
+        ..Default::default()
     };
-    let page = TEMPLATES.render("simple.html", &Context::from_serialize(&packages).unwrap()).unwrap();
-    println!("{}", page);
 
-    Html(page)
+    match client.list_objects_v2(request).await {
+        Ok(result) => {
+            println!("{:?}", filter_s3_folders(&result));
+            let packages = filter_s3_folders(&result);
+            let packages = ListPackages {
+                packages: packages.iter().map(|name| {
+                    Package {
+                        name: name.into(),
+                        href: format!("/simple/{}/", name)
+                    }
+                }).collect(),
+            };
+            let page = TEMPLATES.render("simple.html", &Context::from_serialize(&packages).unwrap()).unwrap();
+            // println!("{}", page);
+
+            Ok(Html(page))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(format!("{:?}", err))))
+    }
 }
 
 async fn get_distribution(Path(distrib): Path<String>) -> Html<String> {
@@ -82,7 +112,6 @@ async fn get_distribution(Path(distrib): Path<String>) -> Html<String> {
         packages: all_packages,
     };
     let page = TEMPLATES.render("simple.html", &Context::from_serialize(&packages).unwrap()).unwrap();
-    println!("{}", page);
 
     Html(page)
 }
