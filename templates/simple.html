@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}PyPI{% endblock title %}
+{% block content %}
+<h1>Packages</h1>
+
+{% for item in packages %}
+    <a href="{{ item.href }}">{{ item.text }}</a>
+    <br>
+{% endfor %}
+
+{% endblock content %}
