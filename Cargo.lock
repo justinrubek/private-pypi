@@ -37,6 +37,7 @@ dependencies = [
  "axum",
  "lazy_static",
  "log",
+ "rusoto_core",
  "rusoto_s3",
  "rusoto_signature",
  "serde",

@@ -1,16 +1,17 @@
 use axum::{
+    body::StreamBody,
     extract::Path,
-    handler::{get, post},
+    handler::get,
     http::StatusCode,
     response::{IntoResponse, Html},
     Json, Router,
 };
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use rusoto_s3::{ListObjectsV2Request, ListObjectsV2Output, S3Client, S3};
+use rusoto_s3::{GetObjectRequest, ListObjectsV2Request, ListObjectsV2Output, S3Client, S3};
+use rusoto_core::ByteStream;
 use rusoto_signature::region::Region;
-use serde_json::{to_value, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use tera::{Context, Tera};
 
@@ -128,8 +129,21 @@ async fn get_distribution(Path(distrib): Path<String>) -> Result<Html<String>, i
     }
 }
 
-async fn get_package() -> impl IntoResponse {
-    (StatusCode::OK, "package")
+async fn get_package(Path((distrib, filename)): Path<(String, String)>) -> Result<StreamBody<ByteStream>, impl IntoResponse> {
+    let client = S3Client::new(Region::UsEast2);
+    let request = GetObjectRequest {
+        bucket: "koloni-pypi".into(),
+        key: format!("{}/{}", distrib, filename),
+        ..Default::default()
+    };
+    match client.get_object(request).await {
+        Ok(obj) => {
+            let body = obj.body.unwrap();
+            let sbody = StreamBody::new(body);
+            Ok(sbody)
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(format!("{:?}", err))))
+    }
 }
 
 async fn create_package(Json(payload): Json<CreatePackage>) -> impl IntoResponse {
