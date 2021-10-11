@@ -117,7 +117,7 @@ async fn get_distribution(Path(distrib): Path<String>) -> Result<Html<String>, i
                 packages: packages.iter().map(|name| {
                     Package {
                         name: name.into(),
-                        href: format!("/simple/{}/{}/", distrib, name)
+                        href: format!("/simple/{}/{}", distrib, name)
                     }
                 }).collect(),
             };
