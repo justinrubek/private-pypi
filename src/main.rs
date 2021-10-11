@@ -165,6 +165,7 @@ fn filter_s3_packages(data: &ListObjectsV2Output) -> Vec<String> {
                     Some(key) => {
                         let filename = key.split('/').nth(1);
                         if let Some(filename) = filename {
+                            if filename.len() == 0 { return; }
                             packages.insert(filename);
                         }
                     }
